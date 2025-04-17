@@ -179,33 +179,24 @@
             ;; Return success
             true)))
 
-;; Batch process clients with a fixed number of clients per batch
-(define-public (batch-verify-clients-v1 (client-list (list 10 principal)) (verification-status (string-ascii 20)) (risk-category (string-ascii 10)))
-    (let ((validator-authorized (default-to false (map-get? authorized-validators tx-sender))))
-        (begin
-            (asserts! validator-authorized ERR-UNAUTHORIZED-ACCESS)
-            (asserts! (is-valid-verification-status verification-status) ERR-INVALID-VERIFICATION-STATUS)
-            (asserts! (is-valid-risk-category risk-category) ERR-MALFORMED-PARAMETERS)
-            (asserts! (> (len client-list) u0) ERR-MALFORMED-PARAMETERS)
-            
-            ;; Process up to 10 clients
-            (ok (fold process-single-client-fold client-list (list verification-status risk-category u0))))))
-
-;; Helper function for fold operation
-(define-private (process-single-client-fold 
+;; Single client batch processor for fold usage
+(define-private (process-single-fold-client 
     (client-address principal) 
-    (state-data (list 2 (string-ascii 20) (string-ascii 10) uint)))
+    (count uint))
     
-    (let ((verification-status (unwrap-panic (element-at state-data u0)))
-          (risk-category (unwrap-panic (element-at state-data u1)))
-          (processed-count (unwrap-panic (element-at state-data u2))))
-        
+    (let ((verification-status (var-get batch-status))
+          (risk-category (var-get batch-risk)))
+          
         (if (process-single-client client-address verification-status risk-category)
-            (list verification-status risk-category (+ processed-count u1))
-            (list verification-status risk-category processed-count))))
+            (+ count u1)
+            count)))
 
-;; Batch verify for larger batches - split into chunks of 10
-(define-public (batch-verify-clients (client-list (list 200 principal)) (verification-status (string-ascii 20)) (risk-category (string-ascii 10)))
+;; Data variables for batch processing
+(define-data-var batch-status (string-ascii 20) STATUS-PENDING)
+(define-data-var batch-risk (string-ascii 10) RISK-STANDARD)
+
+;; Batch process clients with fold operation
+(define-public (batch-verify-clients (client-list (list 100 principal)) (verification-status (string-ascii 20)) (risk-category (string-ascii 10)))
     (let ((validator-authorized (default-to false (map-get? authorized-validators tx-sender))))
         (begin
             (asserts! validator-authorized ERR-UNAUTHORIZED-ACCESS)
@@ -213,29 +204,12 @@
             (asserts! (is-valid-risk-category risk-category) ERR-MALFORMED-PARAMETERS)
             (asserts! (> (len client-list) u0) ERR-MALFORMED-PARAMETERS)
             
-            ;; Process clients in batches - each client individually
-            (let ((processed-count u0))
-                (ok (process-batch-chunk client-list u0 (len client-list) verification-status risk-category))))))
-
-;; Process clients in a batch sequentially
-(define-private (process-batch-chunk 
-    (client-list (list 200 principal)) 
-    (start-index uint) 
-    (end-index uint)
-    (verification-status (string-ascii 20))
-    (risk-category (string-ascii 10)))
-    
-    (let ((processed-count u0))
-        (begin
-            ;; Process first client if available
-            (if (and (< start-index end-index) (< start-index u200))
-                (begin
-                    (process-single-client 
-                        (unwrap-panic (element-at client-list start-index))
-                        verification-status
-                        risk-category)
-                    (+ processed-count u1))
-                processed-count))))
+            ;; Setup batch parameters
+            (var-set batch-status verification-status)
+            (var-set batch-risk risk-category)
+            
+            ;; Process each client with fold
+            (ok (fold process-single-fold-client client-list u0)))))
 
 ;; Audit Trail Functions
 (define-private (get-next-event-id (client-address principal))
